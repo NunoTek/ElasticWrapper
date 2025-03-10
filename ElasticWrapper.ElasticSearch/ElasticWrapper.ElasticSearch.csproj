@@ -2,7 +2,17 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <UserSecretsId>6476996e-76f4-4ed7-92cb-b7c809562932</UserSecretsId>
+
+	<Authors>Nuno ARAUJO</Authors>
+	<Description>A powerful and flexible .NET wrapper library for Elasticsearch</Description>
+
+	<PackageReadmeFile>../README.md</PackageReadmeFile>
+	<RepositoryUrl>https://github.com/NunoTek/ElasticWrapper</RepositoryUrl>
+	<RepositoryType>git</RepositoryType>
+	
+	<EnablePackageValidation>true</EnablePackageValidation>
+	<!-- Optional: Detect breaking changes from a previous version -->
+	<!-- <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion> -->
   </PropertyGroup>
 
   <ItemGroup>
