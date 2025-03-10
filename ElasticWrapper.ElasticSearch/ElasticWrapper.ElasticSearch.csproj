@@ -6,7 +6,7 @@
 	<Authors>Nuno ARAUJO</Authors>
 	<Description>A powerful and flexible .NET wrapper library for Elasticsearch</Description>
 
-	<PackageReadmeFile>../README.md</PackageReadmeFile>
+	<PackageReadmeFile>..\README.md</PackageReadmeFile>
 	<RepositoryUrl>https://github.com/NunoTek/ElasticWrapper</RepositoryUrl>
 	<RepositoryType>git</RepositoryType>
 	
