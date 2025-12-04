@@ -1,66 +1,141 @@
 # ElasticWrapper.ElasticSearch
 
-A powerful and flexible .NET wrapper library for Elasticsearch that simplifies the integration and usage of Elasticsearch in .NET applications. This library provides an abstraction layer over the NEST client with additional features and conveniences for common Elasticsearch operations.
+[![NuGet](https://img.shields.io/nuget/v/ElasticWrapper.ElasticSearch.svg)](https://www.nuget.org/packages/ElasticWrapper.ElasticSearch)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8.x%20%2F%209.x-005571)](https://www.elastic.co/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+A powerful and flexible .NET wrapper library for Elasticsearch that simplifies the integration and usage of Elasticsearch in .NET applications. This library provides an abstraction layer over the official Elastic.Clients.Elasticsearch client with additional features and conveniences for common Elasticsearch operations.
 
-- Built on top of the official NEST client for Elasticsearch
-- Simplified repository pattern for Elasticsearch operations
-- Built-in request builder for complex query construction
-- Automatic retry policies using Polly
-- Type-safe query building
-- Extension methods for common operations
-- Attribute-based configuration
-- Flexible model mapping
+## ✨ Features
 
-## Prerequisites
+- 🔌 Built on top of the official **Elastic.Clients.Elasticsearch** client (v9.x)
+- 📦 Simplified repository pattern for Elasticsearch operations
+- 🔍 Built-in request builder for complex query construction
+- 🔄 Automatic retry policies using Polly
+- 🛡️ Type-safe query building
+- 🧩 Extension methods for common operations
+- 🏷️ Attribute-based configuration
+- 🗺️ Flexible model mapping
+- ☁️ Support for both single-node and Elastic Cloud deployments
+- 📊 Aggregation support with automatic result parsing
 
-- .NET 8.0 or later
-- Elasticsearch 7.x (compatible with NEST 7.17.5)
+## 📋 Prerequisites
 
-## Installation
+- .NET 10.0 or later
+- Elasticsearch 8.x / 9.x (compatible with Elastic.Clients.Elasticsearch 9.2.2)
 
-You can install the package via NuGet Package Manager:
+## 📦 Installation
+
+Install via NuGet Package Manager:
 
 ```powershell
 Install-Package ElasticWrapper.ElasticSearch
 ```
 
-## Dependencies
+Or via .NET CLI:
 
-- NEST (7.17.5)
-- NEST.JsonNetSerializer (7.17.5)
-- Polly (8.4.1)
-- Polly.Extensions.Http (3.0.0)
-- Microsoft.Extensions.Hosting.Abstractions (8.0.0)
-- Microsoft.Extensions.Logging.Abstractions (8.0.2)
-- System.ComponentModel.Annotations (5.0.0)
+```bash
+dotnet add package ElasticWrapper.ElasticSearch
+```
 
-## Configuration Options
+## 🚀 Quick Start
 
-The `ElasticOptions` class provides various configuration settings to customize your Elasticsearch connection and behavior:
-
-### Connection Settings
-- `Uri`: The Elasticsearch server URL (e.g., "http://localhost:9200")
-- `CloudId`: Optional Elastic Cloud deployment ID for cloud deployments
-- `UserName`: Optional username for authentication
-- `Password`: Optional password for authentication
-
-### Index Settings
-- `Index`: The default index name to use
-- `UseRollOverAlias`: Enable/disable index rollover functionality (default: false)
-- `Pattern`: Optional index pattern for rollover indices
-- `MaxSizeGb`: Maximum size in GB for an index before rollover (default: 10)
-- `MaxDocuments`: Optional maximum number of documents before index rollover
-- `MaxInnerResultWindow`: Maximum number of results in inner hits (default: 1000)
-
-### Logging Settings
-- `LogsPath`: Optional path for storing Elasticsearch client logs
-
-Example configuration:
+### 1. Define your entity
 
 ```csharp
-services.AddElasticWrapper(options =>
+public class Product : ElasticEntity<Guid>
+{
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    
+    [ElasticAggregate]
+    public string Category { get; set; } = string.Empty;
+}
+```
+
+### 2. Define your filter
+
+```csharp
+public class ProductFilter
+{
+    public string? Name { get; set; }
+    public List<string>? Categories { get; set; }
+    public ElasticRangeFilter? PriceRange { get; set; }
+}
+```
+
+### 3. Configure services
+
+```csharp
+builder.Services.AddElasticWrapper<Product, ProductFilter, Guid>(options =>
+{
+    options.Uri = "http://localhost:9200";
+    options.Index = "products";
+});
+```
+
+### 4. Use the repository
+
+```csharp
+public class ProductService
+{
+    private readonly ElasticBaseRepository<Product, ProductFilter, Guid> _repository;
+
+    public ProductService(ElasticBaseRepository<Product, ProductFilter, Guid> repository)
+    {
+        _repository = repository;
+    }
+
+    public async Task<Product?> GetByIdAsync(Guid id) 
+        => await _repository.GetAsync(id);
+
+    public async Task CreateAsync(Product product) 
+        => await _repository.InsertAsync(product);
+}
+```
+
+## 📚 Dependencies
+
+| Package | Version |
+|---------|---------|
+| Elastic.Clients.Elasticsearch | 9.2.2 |
+| Polly | 8.6.5 |
+| Microsoft.Extensions.Hosting.Abstractions | 10.0.0 |
+| Microsoft.Extensions.Logging.Abstractions | 10.0.0 |
+| System.ComponentModel.Annotations | 5.0.0 |
+
+## ⚙️ Configuration Options
+
+The `ElasticOptions` class provides various configuration settings:
+
+### Connection Settings
+
+| Property | Description | Required |
+|----------|-------------|----------|
+| `Uri` | Elasticsearch server URL (e.g., `http://localhost:9200`) | Yes* |
+| `CloudId` | Elastic Cloud deployment ID | Yes* |
+| `UserName` | Username for authentication | No |
+| `Password` | Password for authentication | No |
+
+*Either `Uri` or `CloudId` is required.
+
+### Index Settings
+
+| Property | Description | Default |
+|----------|-------------|---------|
+| `Index` | Default index name | Required |
+| `UseRollOverAlias` | Enable index rollover | `false` |
+| `Pattern` | Index pattern for rollover | `null` |
+| `MaxSizeGb` | Max size before rollover | `10` |
+| `MaxDocuments` | Max documents before rollover | `null` |
+| `MaxInnerResultWindow` | Max inner hit results | `1000` |
+
+### Example: Full Configuration
+
+```csharp
+services.AddElasticWrapper<MyEntity, MyFilters, Guid>(options =>
 {
     // Basic Settings
     options.Uri = "http://localhost:9200";
@@ -72,7 +147,7 @@ services.AddElasticWrapper(options =>
     
     // Index Management
     options.UseRollOverAlias = true;
-    options.Pattern = "my-application-{0}"; // Results in indices like my-application-000001
+    options.Pattern = "my-application"; // Results in indices like my-application-000001
     options.MaxSizeGb = 5;
     options.MaxDocuments = 1000000;
     
@@ -84,150 +159,283 @@ services.AddElasticWrapper(options =>
 });
 ```
 
-### Cloud Configuration
+### Example: Elastic Cloud Configuration
 
-For Elastic Cloud deployments, use the CloudId instead of Uri:
+For Elastic Cloud deployments:
 
 ```csharp
-services.AddElasticWrapper(options =>
+services.AddElasticWrapper<MyEntity, MyFilters, Guid>(options =>
 {
-    options.CloudId = "deployment:cloud-id";
+    options.CloudId = "deployment:your-cloud-id";
     options.UserName = "elastic";
     options.Password = "your-cloud-password";
     options.Index = "my-cloud-application";
 });
 ```
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 ElasticWrapper.ElasticSearch/
+├── Attributes/           # Custom attributes for configuration
+│   ├── ElasticAggregateAttribute.cs
+│   ├── ElasticIgnoreOnBuildQueryAttribute.cs
+│   └── NestedAttribute.cs
 ├── Base/                  # Core functionality classes
 │   ├── ElasticBaseRepository.cs
-│   ├── ElasticRequestBuilder.cs
-│   └── ElasticClientProvider.cs
-├── Attributes/           # Custom attributes for configuration
+│   ├── ElasticClientProvider.cs
+│   └── ElasticRequestBuilder.cs
 ├── Converters/          # Type converters and serialization
+│   └── ElasticJsonConverter.cs
 ├── Extensions/          # Extension methods
+│   ├── ServiceCollectionExtensions.cs
+│   └── StringExtensions.cs
 ├── Models/              # Data models and DTOs
+│   ├── ElasticAggregateResult.cs
+│   ├── ElasticDocumentProperty.cs
+│   ├── ElasticEntity.cs
+│   ├── ElasticPaging.cs
+│   └── ElasticRangeFilter.cs
 └── Options/             # Configuration options
+    └── ElasticOptions.cs
 ```
 
-## Key Components
+## 🧱 Key Components
 
-### ElasticBaseRepository
+### ElasticBaseRepository&lt;TEntity, TFilters, TKey&gt;
 
-The base repository class that provides common CRUD operations and search functionality for Elasticsearch indices. It includes methods for:
-- Document indexing
-- Document updates
-- Document deletion
-- Search operations
-- Bulk operations
-- Index management
+The base repository class providing common operations:
 
-### ElasticRequestBuilder
+| Category | Methods |
+|----------|---------|
+| **Cluster** | `HealthAsync` |
+| **Index** | `IndicesExistsAsync`, `CreateIndiceAsync`, `DeleteIndiceAsync`, `IndicesSizeAsync`, `IndicesStatsAsync` |
+| **Documents** | `GetAsync`, `InsertAsync`, `UpdateAsync`, `UpdatePartialAsync`, `DeleteAsync`, `ExistsAsync` |
+| **Search** | `SearchAsync`, `CountAsync`, `AnyAsync`, `GetAggregationsAsync` |
+| **Bulk** | `BulkInsertAsync`, `BulkUpdateAsync`, `BulkDeleteAsync` |
 
-A fluent builder for constructing Elasticsearch queries with type safety and convenience methods for:
-- Query construction
-- Filtering
-- Aggregations
-- Sorting
-- Pagination
+### ElasticRequestBuilder&lt;TEntity, TFilters&gt;
 
-### ElasticClientProvider
+A fluent builder for constructing Elasticsearch queries:
 
-Manages the Elasticsearch client configuration and connection, including:
-- Client initialization
-- Connection management
-- Retry policies
-- Error handling
+- **Query Types**: Bool queries, terms, range, query string, nested
+- **Automatic Field Mapping**: Converts property names to camelCase
+- **Aggregations**: Terms, min, max, avg, nested aggregations
+- **Sorting**: Field sorting with nested path support
+- **Pagination**: Size and from parameters
 
-## Usage
+### ElasticClientProvider&lt;TEntity&gt;
 
-1. Configure the Elasticsearch client in your `Startup.cs` or `Program.cs`:
+Manages Elasticsearch client configuration:
+
+- Client initialization with `ElasticsearchClient` (v9.x)
+- Single-node and Elastic Cloud support
+- Basic authentication
+- Debug mode with request/response logging
+- Configurable request timeout
+
+### ElasticEntity&lt;TKey&gt;
+
+Base entity class for Elasticsearch documents:
 
 ```csharp
-services.AddElasticWrapper(options =>
-{
-    options.Urls = new[] { "http://localhost:9200" };
-    options.DefaultIndex = "your-default-index";
-});
+// Use default Guid key
+public class MyDocument : ElasticEntity { }
+
+// Or specify custom key type
+public class MyDocument : ElasticEntity<int> { }
 ```
 
-2. Create your repository by inheriting from ElasticBaseRepository:
+### 🏷️ Custom Attributes
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `[ElasticAggregate]` | Mark property for aggregation | `[ElasticAggregate] public string Category { get; set; }` |
+| `[ElasticAggregate("groupField")]` | Aggregate with custom group | `[ElasticAggregate("category.keyword")]` |
+| `[ElasticIgnoreOnBuildQuery]` | Exclude from query building | `[ElasticIgnoreOnBuildQuery] public string InternalField { get; set; }` |
+| `[Nested]` | Map to nested Elasticsearch field | `[Nested("items")] public List<Item> Items { get; set; }` |
+
+## 📖 Usage Examples
+
+### Basic CRUD Operations
 
 ```csharp
-public class UserRepository : ElasticBaseRepository<User>
+// Create
+await _repository.InsertAsync(new Product { Id = Guid.NewGuid(), Name = "Widget" });
+
+// Read
+var product = await _repository.GetAsync(productId);
+
+// Update
+product.Name = "Updated Widget";
+await _repository.UpdateAsync(product.Id, product);
+
+// Partial Update
+await _repository.UpdatePartialAsync(productId, new { Name = "Partial Update" });
+
+// Delete
+await _repository.DeleteAsync(productId);
+```
+
+### Search with Filters
+
+```csharp
+var filter = new ProductFilter
 {
-    public UserRepository(IElasticClientProvider clientProvider) 
-        : base(clientProvider)
+    Name = "widget",
+    Categories = new List<string> { "Electronics", "Gadgets" },
+    PriceRange = new ElasticRangeFilter { Min = 10, Max = 100 }
+};
+
+var paging = new ElasticPaging
+{
+    From = 0,
+    Size = 20,
+    SortBy = "Price",
+    Descending = false
+};
+
+var results = await _repository.SearchAsync(filter, paging);
+
+foreach (var hit in results.Documents)
+{
+    Console.WriteLine($"{hit.Name}: ${hit.Price}");
+}
+```
+
+### Aggregations
+
+```csharp
+// Get aggregations based on [ElasticAggregate] attributes
+var aggregations = await _repository.GetAggregationsAsync(filter);
+
+foreach (var agg in aggregations)
+{
+    Console.WriteLine($"Aggregation: {agg.Key}");
+    foreach (var option in agg.Options)
     {
+        Console.WriteLine($"  {option.Key}: {option.Count}");
     }
 }
 ```
 
-3. Use the repository in your services:
+### Bulk Operations
 
 ```csharp
-public class UserService
-{
-    private readonly UserRepository _repository;
+var products = Enumerable.Range(1, 10000)
+    .Select(i => new Product { Id = Guid.NewGuid(), Name = $"Product {i}" });
 
-    public UserService(UserRepository repository)
-    {
-        _repository = repository;
-    }
+// Bulk insert with automatic chunking
+await _repository.BulkInsertAsync(products);
 
-    public async Task<User> GetUserAsync(string id)
-    {
-        return await _repository.GetByIdAsync(id);
-    }
-}
+// Bulk update
+await _repository.BulkUpdateAsync(updatedProducts);
+
+// Bulk delete
+await _repository.BulkDeleteAsync(new[] { 1, 2, 3, 4, 5 });
 ```
 
-## Continuous Integration and Deployment
+### Index Management
 
-This project uses GitHub Actions for continuous integration and deployment. Two workflows are configured:
+```csharp
+// Check if index exists
+if (!await _repository.IndicesExistsAsync())
+{
+    await _repository.CreateIndiceAsync();
+}
+
+// Get index statistics
+var stats = await _repository.IndicesStatsAsync();
+Console.WriteLine($"Documents: {stats?.Docs?.Count}");
+Console.WriteLine($"Size: {stats?.Store?.SizeInBytes} bytes");
+
+// Check cluster health
+var health = await _repository.HealthAsync();
+Console.WriteLine($"Status: {health.Status}");
+```
+
+## 🔄 Migration from NEST
+
+This library has been migrated from NEST to the official `Elastic.Clients.Elasticsearch` client.
+
+### Key Changes
+
+| NEST (v7.x) | Elastic.Clients.Elasticsearch (v9.x) |
+|-------------|--------------------------------------|
+| `ElasticClient` | `ElasticsearchClient` |
+| `ConnectionSettings` | `ElasticsearchClientSettings` |
+| `response.IsValid` | `response.IsValidResponse` |
+| `Nest` namespace | `Elastic.Clients.Elasticsearch` |
+| Newtonsoft.Json | System.Text.Json |
+
+### Namespace Changes
+
+```csharp
+// Before (NEST)
+using Nest;
+
+// After (Elastic.Clients.Elasticsearch)
+using Elastic.Clients.Elasticsearch;
+using Elastic.Clients.Elasticsearch.QueryDsl;
+using Elastic.Clients.Elasticsearch.Aggregations;
+```
+
+## 🔧 CI/CD
+
+This project uses GitHub Actions for continuous integration and deployment.
 
 ### Build Workflow
-Triggered on:
-- Push to main branch
-- Pull requests to main branch
-- Manual trigger
 
-Actions performed:
-- Builds the solution
-- Runs unit tests
-- Creates NuGet package
-- Uploads package as artifact
+**Triggers:** Push to main, Pull requests, Manual
+
+| Step | Action |
+|------|--------|
+| ✅ | Build solution |
+| ✅ | Run unit tests |
+| ✅ | Create NuGet package |
+| ✅ | Upload artifact |
 
 ### Release Workflow
-Triggered on:
-- Release publication
 
-Actions performed:
-- Builds the solution with release version
-- Runs unit tests
-- Creates versioned NuGet package
-- Publishes to NuGet.org
-- Uploads package as artifact
+**Trigger:** Release publication
 
-To create a new release:
-1. Create and push a new tag following semantic versioning (e.g., v1.0.0)
-2. Create a new release on GitHub using that tag
-3. Publish the release
-4. The workflow will automatically build and publish to NuGet.org
+| Step | Action |
+|------|--------|
+| ✅ | Build with release version |
+| ✅ | Run tests |
+| ✅ | Publish to NuGet.org |
 
-Note: Publishing to NuGet requires a NuGet API key stored in the repository secrets as `NUGET_API_KEY`.
+### Creating a Release
 
-## Contributing
+```bash
+# 1. Tag your release
+git tag v1.0.0
+git push origin v1.0.0
+
+# 2. Create release on GitHub
+# 3. Publish - workflow auto-deploys to NuGet
+```
+
+> **Note:** Requires `NUGET_API_KEY` in repository secrets.
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## 📄 License
 
-## Support
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-For support and questions, please open an issue in the GitHub repository. 
+## 💬 Support
+
+For support and questions, please [open an issue](https://github.com/NunoTek/ElasticWrapper/issues) in the GitHub repository.
+
+---
+
+Made with ❤️ by [Nuno ARAUJO](https://github.com/NunoTek)

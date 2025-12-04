@@ -1,7 +1,6 @@
-using Nest;
+using Elastic.Clients.Elasticsearch.Aggregations;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ElasticWrapper.ElasticSearch.Models
 {
@@ -43,66 +42,64 @@ namespace ElasticWrapper.ElasticSearch.Models
             public long Count { get; private set; }
         }
 
-        public static List<ElasticAggregateResult> FromSearchResponse<T>(ISearchResponse<T> response) where T : class
+        public static List<ElasticAggregateResult> FromAggregateDictionary(AggregateDictionary aggregations)
         {
             var result = new List<ElasticAggregateResult>();
 
-            foreach (var agg in response.Aggregations)
+            foreach (var agg in aggregations)
             {
-                var items = new List<KeyedBucket<object>>();
-                if (agg.Value is BucketAggregate bucket)
-                {
-                    items = bucket.Items.OfType<KeyedBucket<object>>().ToList();
-                }
-                else if (agg.Value is SingleBucketAggregate nested)
-                {
-                    var nestedBucket = nested.Values.OfType<BucketAggregate>().ToList();
-
-                    if (!nestedBucket.Any())
-                    {
-                        nestedBucket = nested.Values.OfType<SingleBucketAggregate>()
-                            .First()
-                            .Values
-                            .OfType<BucketAggregate>()
-                            .ToList();
-                    }
-
-                    items = nestedBucket[0].Items.OfType<KeyedBucket<object>>().ToList();
-                }
-                else //if (agg.Value is ValueAggregate aggregateValue)
-                {
-                    result.Add(new ElasticAggregateResult(agg.Key) { Value = ((dynamic)agg.Value).Value });
-                    continue;
-                }
-
                 var aggregate = new ElasticAggregateResult(agg.Key);
-                items.ForEach(x =>
+
+                if (agg.Value is StringTermsAggregate stringTerms)
                 {
-                    int? groupCount = null;
-
-                    if (x.Keys?.Contains(GroupByKey) == true && x.Values.Any())
+                    foreach (var bucket in stringTerms.Buckets)
                     {
-                        var first = x.Values.First();
-                        if (first is BucketAggregate)
-                        {
-                            // Terms Aggs
-                            var groups = x.Values.OfType<BucketAggregate>().ToList();
-                            var groupKeys = groups[0].Items.OfType<KeyedBucket<object>>().Select(x => x.Key.ToString()).ToHashSet();
-                            groupCount = groupKeys.Distinct().Count(); // Count Distint pas encore gerer par Elastic
-                        }
-
-                        if (first is ValueAggregate)
-                        {
-                            // Count Aggs
-                            var groups = x.Values.OfType<ValueAggregate>().ToList();
-                            groupCount = groups[0].Value.HasValue ? int.Parse(groups[0].Value.ToString()) : 0;
-                        }
+                        aggregate.AddOption(bucket.Key.Value!, bucket.DocCount);
                     }
-
-                    aggregate.AddOption(x.Key, groupCount ?? x.DocCount ?? 0);
-                });
-
-                result.Add(aggregate);
+                    result.Add(aggregate);
+                }
+                else if (agg.Value is LongTermsAggregate longTerms)
+                {
+                    foreach (var bucket in longTerms.Buckets)
+                    {
+                        aggregate.AddOption(bucket.Key, bucket.DocCount);
+                    }
+                    result.Add(aggregate);
+                }
+                else if (agg.Value is DoubleTermsAggregate doubleTerms)
+                {
+                    foreach (var bucket in doubleTerms.Buckets)
+                    {
+                        aggregate.AddOption(bucket.Key, bucket.DocCount);
+                    }
+                    result.Add(aggregate);
+                }
+                else if (agg.Value is NestedAggregate nested)
+                {
+                    var nestedResults = FromAggregateDictionary(nested.Aggregations);
+                    result.AddRange(nestedResults);
+                }
+                else if (agg.Value is FilterAggregate filter)
+                {
+                    var filterResults = FromAggregateDictionary(filter.Aggregations);
+                    result.AddRange(filterResults);
+                }
+                else if (agg.Value is MinAggregate minAgg)
+                {
+                    result.Add(new ElasticAggregateResult(agg.Key) { Value = minAgg.Value });
+                }
+                else if (agg.Value is MaxAggregate maxAgg)
+                {
+                    result.Add(new ElasticAggregateResult(agg.Key) { Value = maxAgg.Value });
+                }
+                else if (agg.Value is AverageAggregate avgAgg)
+                {
+                    result.Add(new ElasticAggregateResult(agg.Key) { Value = avgAgg.Value });
+                }
+                else if (agg.Value is ValueCountAggregate countAgg)
+                {
+                    result.Add(new ElasticAggregateResult(agg.Key) { Value = countAgg.Value });
+                }
             }
 
             return result;

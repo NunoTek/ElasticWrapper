@@ -1,23 +1,24 @@
-﻿using Nest;
-using System;
+﻿using System;
 
 namespace ElasticWrapper.ElasticSearch.Attributes
 {
     public class ElasticAggregateAttribute : Attribute
     {
-        public string GroupBy { get; set; }
+        public const string DefaultOrder = "_key";
+
+        public string? GroupBy { get; set; }
 
         public string Order { get; set; }
 
         public ElasticAggregateAttribute()
         {
-            Order = TermsOrder.KeyAscending.Key;
+            Order = DefaultOrder;
         }
 
         public ElasticAggregateAttribute(string groupByField)
         {
             GroupBy = groupByField;
-            Order = TermsOrder.KeyAscending.Key;
+            Order = DefaultOrder;
         }
 
         public ElasticAggregateAttribute(string groupByField, string order)

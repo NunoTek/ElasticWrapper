@@ -1,5 +1,4 @@
-﻿using Nest;
-using System;
+﻿using System;
 using System.ComponentModel.DataAnnotations;
 
 namespace ElasticWrapper.ElasticSearch.Models
@@ -8,15 +7,14 @@ namespace ElasticWrapper.ElasticSearch.Models
     {
     }
 
-    [ElasticsearchType(IdProperty = nameof(ElasticEntity.Id))]
     public class ElasticEntity<T> : IElasticEntity<T>
     {
         [Key]
-        public virtual T Id { get; set; }
+        public virtual T Id { get; set; } = default!;
     }
 
     public interface IElasticEntity<out TKey>
     {
-        public TKey Id { get; }
+        TKey Id { get; }
     }
 }
