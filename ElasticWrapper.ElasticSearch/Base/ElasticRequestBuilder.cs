@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Elastic.Clients.Elasticsearch;
+using Elastic.Clients.Elasticsearch.Core.Search;
+using Elastic.Clients.Elasticsearch.QueryDsl;
 using ElasticWrapper.ElasticSearch.Attributes;
 using ElasticWrapper.ElasticSearch.Extensions;
 using ElasticWrapper.ElasticSearch.Models;
 using ElasticWrapper.ElasticSearch.Options;
-using Nest;
 
 namespace ElasticWrapper.ElasticSearch.Base;
 
@@ -14,7 +16,6 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
     where TElasticEntity : class, new()
     where TElasticFilters : class
 {
-
     protected const string KeywordSuffix = "keyword";
     protected const string GroupByKey = ElasticAggregateResult.GroupByKey;
 
@@ -24,12 +25,11 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
     public ElasticRequestBuilder(ElasticOptions options)
     {
         _options = options;
-
         AddProperties(typeof(TElasticEntity));
     }
 
-    private string? GetFullNameCamelCased(string fullName) => !string.IsNullOrEmpty(fullName) ? string.Join(".", fullName.Split(".").Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.ToCamelCase())) : null;
-    private string? GetKeywordName(string fieldName) => !string.IsNullOrEmpty(fieldName) ? $"{fieldName}.{KeywordSuffix}" : null;
+    private string? GetFullNameCamelCased(string? fullName) => !string.IsNullOrEmpty(fullName) ? string.Join(".", fullName.Split(".").Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.ToCamelCase())) : null;
+    private string? GetKeywordName(string? fieldName) => !string.IsNullOrEmpty(fieldName) ? $"{fieldName}.{KeywordSuffix}" : null;
 
     private void AddProperties(Type documentType, string? currentPath = null)
     {
@@ -56,13 +56,12 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
                 AggregateOrder = GetFullNameCamelCased(aggregate?.Order)
             });
 
-
             var listTypes = new Type[] { typeof(List<>), typeof(IEnumerable<>), typeof(ICollection<>) };
             if (propType.IsGenericType && listTypes.Contains(propType.GetGenericTypeDefinition()))
             {
                 AddProperties(propType.GetGenericArguments()[0], newProperty);
             }
-            else if (propType.IsClass)
+            else if (propType.IsClass && propType != typeof(string))
             {
                 AddProperties(propType, newProperty);
             }
@@ -73,11 +72,10 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
     {
         var props = filters.GetType().GetProperties()
             .Where(prop => !Attribute.IsDefined(prop, typeof(ElasticIgnoreOnBuildQueryAttribute)))
-            .Where(prop => prop.GetValue(filters, null) != null)
-            ;
+            .Where(prop => prop.GetValue(filters, null) != null);
 
-        var mustQueries = new List<QueryContainer>();
-        var shouldQueries = new List<QueryContainer>();
+        var mustQueries = new List<Query>();
+        var shouldQueries = new List<Query>();
         var nestedQueries = new List<NestedQuery>();
 
         foreach (var prop in props)
@@ -93,107 +91,112 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
             if (propMap == null)
                 continue;
 
-
             Type propType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
 
-            var fullName = GetFullNameCamelCased(propMap.FullName); // Correct way
-            //var fullName = prop.Name.ToCamelCase(); // Incorrect way
-            var fieldName = propMap.Keyword ? GetKeywordName(fullName) : fullName;
+            var fullName = GetFullNameCamelCased(propMap.FullName)!;
+            var fieldName = propMap.Keyword ? GetKeywordName(fullName)! : fullName;
 
-
+            Query? query = null;
 
             if (propType == typeof(ElasticRangeFilter))
             {
                 var range = propValue as ElasticRangeFilter;
-
-                var rangeQuery = new NumericRangeQuery()
+                query = new NumberRangeQuery(new Field(fieldName))
                 {
-                    Field = fieldName,
-                    GreaterThan = range.Min ?? 0,
-                    LessThan = range.Max
+                    Gt = range?.Min ?? 0,
+                    Lt = range?.Max
                 };
-
-                mustQueries.Add(rangeQuery);
             }
             else if (propType == typeof(string))
             {
-                var stringQuery = new QueryStringQuery()
+                query = new QueryStringQuery
                 {
                     DefaultField = fullName,
-                    Query = $"*{propValue.ToString()}*"
+                    Query = $"*{propValue}*"
                 };
-
-                mustQueries.Add(stringQuery);
             }
             else if (propType == typeof(List<string>))
             {
-                var termsQuery = new TermsQuery()
+                var values = (propValue as List<string>)?.Select(v => FieldValue.String(v)).ToList();
+                query = new TermsQuery
                 {
                     Field = fieldName,
-                    Terms = propValue as List<string>
+                    Terms = values != null ? new TermsQueryField(values) : null
                 };
-
-                mustQueries.Add(termsQuery);
             }
             else if (propType.IsGenericType && propType.GetGenericTypeDefinition() == typeof(List<>))
             {
-                var propValues = propValue as List<object>; // TODO: convertion
-                var termsQuery = new TermsQuery()
+                var propValues = (propValue as IEnumerable<object>)?.Select(v => FieldValue.String(v?.ToString()!)).ToList();
+                query = new TermsQuery
                 {
                     Field = fieldName,
-                    Terms = propValues
+                    Terms = propValues != null ? new TermsQueryField(propValues) : null
                 };
-
-                mustQueries.Add(termsQuery);
             }
             else
             {
-                var termsQuery = new TermQuery()
+                query = new TermQuery(fieldName)
                 {
                     Field = fieldName,
-                    Value = propValue
+                    Value = ConvertToFieldValue(propValue)
                 };
-
-                mustQueries.Add(termsQuery);
             }
 
-            if (!string.IsNullOrEmpty(propMap.Nested))
+            if (query != null)
             {
-                var lastQuery = mustQueries.Last();
-                var path = propMap.Nested.ToCamelCase();
+                mustQueries.Add(query);
 
-                if (!nestedQueries.Any(x => x.Path == path))
+                if (!string.IsNullOrEmpty(propMap.Nested))
                 {
-                    nestedQueries.Add(new NestedQuery()
+                    var path = propMap.Nested.ToCamelCase();
+
+                    var existingNested = nestedQueries.FirstOrDefault(x => x.Path == path);
+                    if (existingNested == null)
                     {
-                        Path = path,
-                        Query = lastQuery,
-                        InnerHits = new InnerHits { Size = _options.MaxInnerResultWindow }
-                    });
-                }
-                else
-                {
-                    var nestedQuery = nestedQueries.First(x => x.Path == path);
-                    nestedQuery.Query &= lastQuery;
+                        nestedQueries.Add(new NestedQuery
+                        {
+                            Path = path,
+                            Query = query,
+                            InnerHits = new InnerHits { Size = _options.MaxInnerResultWindow }
+                        });
+                    }
+                    else
+                    {
+                        existingNested.Query = new BoolQuery
+                        {
+                            Must = new List<Query> { existingNested.Query!, query }
+                        };
+                    }
                 }
             }
         }
 
-        var boolQuery = new BoolQuery() { Must = mustQueries, Should = shouldQueries };
+        var boolQuery = new BoolQuery { Must = mustQueries, Should = shouldQueries };
         return (boolQuery, nestedQueries);
+    }
+
+    private static FieldValue ConvertToFieldValue(object value)
+    {
+        return value switch
+        {
+            string s => FieldValue.String(s),
+            int i => FieldValue.Long(i),
+            long l => FieldValue.Long(l),
+            double d => FieldValue.Double(d),
+            float f => FieldValue.Double(f),
+            decimal dec => FieldValue.Double((double)dec),
+            bool b => FieldValue.Boolean(b),
+            _ => FieldValue.String(value?.ToString() ?? string.Empty)
+        };
     }
 
     public virtual Task<BoolQuery> GetQueryAsync(TElasticFilters filters)
     {
         var query = BuildModelFilters(filters);
 
-        //    var aggregatedQuery = queries.Where(x => x != null).Aggregate((current, next) => current & next);
-        //    mustContainer = new QueryContainer[] { aggregatedQuery };
-        //    var query = new BoolQuery { Must = mustContainer };
-
         if (query.NestedQueries.Any())
         {
-            var shouldQueries = query.BoolQuery.Should.ToList();
+            var shouldQueries = query.BoolQuery.Should?.ToList() ?? new List<Query>();
             query.NestedQueries.ForEach(x => shouldQueries.Add(x));
             query.BoolQuery.Should = shouldQueries;
         }
@@ -201,54 +204,49 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
         return Task.FromResult(query.BoolQuery);
     }
 
-    public virtual async Task<SearchDescriptor<TElasticEntity>> BuildSearchRequestAsync(
-        SearchDescriptor<TElasticEntity> searchRequest,
+    public virtual async Task<SearchRequestDescriptor<TElasticEntity>> BuildSearchRequestAsync(
+        SearchRequestDescriptor<TElasticEntity> searchRequest,
         TElasticFilters filters)
     {
         var query = await GetQueryAsync(filters);
-
-        searchRequest.Query(_ => query);
-
+        searchRequest.Query(query);
         return searchRequest;
     }
 
-    public virtual Task<SearchDescriptor<TElasticEntity>> ApplySortAsync(SearchDescriptor<TElasticEntity> searchRequest,
+    public virtual Task<SearchRequestDescriptor<TElasticEntity>> ApplySortAsync(
+        SearchRequestDescriptor<TElasticEntity> searchRequest,
         ElasticPaging paging)
     {
         if (string.IsNullOrEmpty(paging.SortBy))
             return Task.FromResult(searchRequest);
 
-        var docProp = _documentProperties.FirstOrDefault(x => x.FullName.ToLower() == paging.SortBy.ToLower());
+        var docProp = _documentProperties.FirstOrDefault(x => x.FullName.Equals(paging.SortBy, StringComparison.OrdinalIgnoreCase));
         if (docProp == null)
             return Task.FromResult(searchRequest);
 
-        var key = GetFullNameCamelCased(docProp.FullName);
+        var key = GetFullNameCamelCased(docProp.FullName)!;
         if (docProp.Type == typeof(string) || docProp.Type == typeof(IEnumerable<string>))
             key += $".{KeywordSuffix}";
 
         if (!string.IsNullOrEmpty(docProp.Nested))
         {
-            var nested = GetFullNameCamelCased(docProp.Nested);
-            searchRequest.Sort(
-                s => s.Field(
-                    f => f
-                    .Field(new Field(key))
-                    .Order(paging.Descending ? SortOrder.Descending : SortOrder.Ascending)
-                    .Nested(n => n.Path(nested))
-                ));
-
+            var nested = GetFullNameCamelCased(docProp.Nested)!;
+            searchRequest.Sort(s => s
+                .Field(new Field(key), f => f
+                    .Order(paging.Descending ? SortOrder.Desc : SortOrder.Asc)
+                    .Nested(n => n.Path(nested))));
             return Task.FromResult(searchRequest);
         }
 
-        searchRequest.Sort(s => s.Field(new Field(key), paging.Descending ? SortOrder.Descending : SortOrder.Ascending));
+        searchRequest.Sort(s => s
+            .Field(new Field(key), f => f.Order(paging.Descending ? SortOrder.Desc : SortOrder.Asc)));
 
         return Task.FromResult(searchRequest);
     }
 
-    public virtual async Task<SearchDescriptor<TElasticEntity>> BuildCountRequestAsync(
-        TElasticFilters filters)
+    public virtual async Task<SearchRequestDescriptor<TElasticEntity>> BuildCountRequestAsync(TElasticFilters filters)
     {
-        var searchRequest = new SearchDescriptor<TElasticEntity>();
+        var searchRequest = new SearchRequestDescriptor<TElasticEntity>();
         searchRequest.Size(0);
         searchRequest.From(0);
 
@@ -257,8 +255,7 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
         return searchRequest;
     }
 
-    public virtual async Task<SearchDescriptor<TElasticEntity>> BuildAggregateRequestAsync(
-        TElasticFilters filters)
+    public virtual async Task<SearchRequestDescriptor<TElasticEntity>> BuildAggregateRequestAsync(TElasticFilters filters)
     {
         var searchRequest = await BuildCountRequestAsync(filters);
         ApplyAggregations(searchRequest, filters);
@@ -266,111 +263,72 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
         return searchRequest;
     }
 
-    protected SearchDescriptor<TElasticEntity> ApplyAggregations(SearchDescriptor<TElasticEntity> searchRequest,
+    protected SearchRequestDescriptor<TElasticEntity> ApplyAggregations(
+        SearchRequestDescriptor<TElasticEntity> searchRequest,
         TElasticFilters filters)
     {
-        var descriptor = new AggregationContainerDescriptor<TElasticEntity>();
-        var aggregatesProps = _documentProperties.Where(p => p.Aggregate);
+        var aggregatesProps = _documentProperties.Where(p => p.Aggregate).ToList();
 
-
-        var query = new BoolQuery();
-        var queries = BuildModelFilters(filters);
-        var hasNestedQueries = queries.NestedQueries != null && queries.NestedQueries.Any();
-        if (hasNestedQueries)
+        searchRequest.Aggregations(aggs =>
         {
-            var aggregatedQuery = queries.NestedQueries.Select(e => e.Query).Aggregate(new QueryContainer(), (current, next) => current & next);
-            query.Must = new QueryContainer[] { aggregatedQuery };
-        }
-
-        foreach (var prop in aggregatesProps)
-        {
-            if (prop == null)
-                continue;
-
-            var fullName = GetFullNameCamelCased(prop.FullName);
-            var fieldName = prop.Keyword ? GetKeywordName(fullName) : fullName;
-
-            if (!string.IsNullOrEmpty(prop.Nested))
+            foreach (var prop in aggregatesProps)
             {
-                if (string.IsNullOrEmpty(prop.AggregateGroup))
-                    prop.AggregateGroup = fieldName;
+                if (prop == null)
+                    continue;
 
-                var nestFieldPath = prop.Nested.ToCamelCase();
-                var propName = $"{prop.Nested}{prop.Name.ToPascalCase()}";
+                var fullName = GetFullNameCamelCased(prop.FullName)!;
+                var fieldName = prop.Keyword ? GetKeywordName(fullName)! : fullName;
 
-                if (hasNestedQueries)
+                if (!string.IsNullOrEmpty(prop.Nested))
                 {
-                    descriptor
-                       .Nested(prop.Name, t => t.Path(nestFieldPath)
-                       .Aggregations(t => t
-                           .Filter($"filtered_{prop.Name}", s => s
-                               .Filter(s => s.Bool(s => query))
+                    if (string.IsNullOrEmpty(prop.AggregateGroup))
+                        prop.AggregateGroup = fieldName;
 
-                               .Aggregations(t => t
-                                   .Terms(fullName, t => t
-                                       .Field(fieldName)
-                                       .Order(o => o
-                                           .Ascending(prop.AggregateOrder))
-                                           .Size(int.MaxValue)))
-                       )));
-                }
-                else
-                {
-                    // TODO: separate Nested Parts + Reuse selectors
+                    var nestFieldPath = prop.Nested.ToCamelCase();
 
-                    descriptor
-                       .Nested(prop.Name, t => t.Path(nestFieldPath) // Incorrect way
-                       //.Nested(propName, t => t.Path(nestFieldPath) // Correct way
-                       .Aggregations(t => t.Terms(fullName, t => t.Field(fieldName).Order(o => o.Ascending(prop.AggregateOrder)).Size(int.MaxValue)
-                       //.Aggregations(_ => _.ValueCount(GroupByKey, t => t.Field(prop.AggregateGroup))) // TODO: a activer lorsque elastic pourra faire des count distinct // TODO: tester collapse
-                       //.Aggregations(_ => _.Terms(GroupByKey, t => t.Field(prop.AggregateGroup).Size(int.MaxValue)))
-                       )));
+                    aggs.Add(prop.Name, a => a
+                        .Nested(n => n
+                            .Path(nestFieldPath))
+                        .Aggregations(na => na
+                            .Add(fullName, ta => ta
+                                .Terms(t => t
+                                    .Field(fieldName)
+                                    .Size(int.MaxValue)))));
+                    continue;
                 }
 
-                continue;
+                var propType = Nullable.GetUnderlyingType(prop.Type) ?? prop.Type;
+
+                if (propType == typeof(decimal) || propType == typeof(double) || propType == typeof(int))
+                {
+                    aggs.Add($"{prop.Name}Min", a => a.Min(m => m.Field(fieldName)));
+                    aggs.Add($"{prop.Name}Max", a => a.Max(m => m.Field(fieldName)));
+                    continue;
+                }
+
+                if (propType == typeof(bool))
+                {
+                    aggs.Add($"{prop.Name}Avg", a => a.Avg(av => av.Field(fieldName)));
+                    continue;
+                }
+
+                aggs.Add(prop.Name, a => a
+                    .Terms(t => t
+                        .Field(fieldName)
+                        .Size(int.MaxValue)));
             }
-
-            if (!string.IsNullOrEmpty(prop.AggregateGroup))
-            {
-                descriptor.Terms(prop.Name, t => t.Field(fieldName).Order(o => o.Ascending(prop.AggregateOrder)).Size(int.MaxValue)
-                        //.Aggregations(_ => _.ValueCount(GroupByKey, t => t.Field(prop.AggregateGroup))) // TODO: a activer lorsque elastic pourra faire des count distinct // TODO: tester collapse     
-                        //.Aggregations(_ => _.Terms(GroupByKey, t => t.Field(prop.AggregateGroup).Size(int.MaxValue)))
-                        );
-                continue;
-            }
-
-            var propType = Nullable.GetUnderlyingType(prop.Type) ?? prop.Type;
-
-            if (propType == typeof(decimal) || propType == typeof(double) || propType == typeof(int))
-            {
-                descriptor
-                    .Min($"{prop.Name}Min", t => t.Field(fieldName))
-                    .Max($"{prop.Name}Max", t => t.Field(fieldName))
-                    ;
-                continue;
-            }
-
-            if (propType == typeof(bool))
-            {
-                descriptor.Average($"{prop.Name}Avg", t => t.Field(fieldName));
-                continue;
-            }
-
-            descriptor.Terms(prop.Name, t => t.Field(fieldName).Order(o => o.Ascending(prop.AggregateOrder)).Size(int.MaxValue));
-        }
-
-        searchRequest.Aggregations(_ => descriptor);
+        });
 
         return searchRequest;
     }
 
-    public virtual async Task<SearchDescriptor<TElasticEntity>> BuildSearchRequestAsync(
+    public virtual async Task<SearchRequestDescriptor<TElasticEntity>> BuildSearchRequestAsync(
         TElasticFilters filters,
         ElasticPaging paging,
-        bool hasSource = true,
-        Func<SourceFilterDescriptor<TElasticEntity>, ISourceFilter>? source = null)
+        bool hasSource = true)
     {
-        var searchRequest = new SearchDescriptor<TElasticEntity>();
+        var searchRequest = new SearchRequestDescriptor<TElasticEntity>();
+
         if (filters != null)
             searchRequest = await BuildSearchRequestAsync(searchRequest, filters);
 
@@ -380,9 +338,6 @@ public class ElasticRequestBuilder<TElasticEntity, TElasticFilters>
         await ApplySortAsync(searchRequest, paging);
 
         searchRequest.Source(hasSource);
-        if (source != null)
-            searchRequest.Source(source);
-
         searchRequest.Version(true);
 
         return searchRequest;

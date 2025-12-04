@@ -1,28 +1,27 @@
 ﻿using ElasticWrapper.ElasticSearch.Extensions;
-using Newtonsoft.Json;
 using System;
-using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ElasticWrapper.ElasticSearch.Converters
 {
     public class ElasticJsonConverter : JsonConverter<string>
     {
-        public override void WriteJson(JsonWriter writer, [AllowNull] string value, JsonSerializer serializer)
+        public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return reader.GetString();
+        }
+
+        public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
         {
             if (string.IsNullOrEmpty(value))
             {
-                writer.WriteValue(null as string);
+                writer.WriteNullValue();
                 return;
             }
 
             var result = value.RemoveDiacritics().ToPascalCase();
-
-            writer.WriteValue(result);
-        }
-
-        public override string ReadJson(JsonReader reader, Type objectType, [AllowNull] string existingValue, bool hasExistingValue, JsonSerializer serializer)
-        {
-            return reader.Value.ToString();
+            writer.WriteStringValue(result);
         }
     }
 }
